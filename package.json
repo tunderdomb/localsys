@@ -1,0 +1,11 @@
++{
++  "name": "localsys",
++  "version": "1.0.0",
++  "description": "javascript local file system wrapper",
++  "keywords": ["localFileSystem", "local file system"],
++  "author": "Zoltan Nagy <tunderdomb@gmail.com> (https://github.com/tunderdomb)",
++  "repository" : {
++    "type" : "git",
++    "url" : "https://github.com/tunderdomb/localsys.git"
++  }
++}
