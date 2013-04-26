@@ -117,14 +117,14 @@
     return localsys.datURLtoBlob(canvas.canvas.toDataURL(imageData.type), imageData.type)
   }
 
-  localsys.resizeImage = function( imageFile, maxWidth, maxHeight, done ){
+  localsys.resizeImage = function( sourceImage, maxWidth, maxHeight, done ){
     var canvas = doc.createElement("canvas")
       , context = canvas.getContext("2d")
-      , img = doc.createElement("img")
+      , img = new Image()
       , width, height, ret
-      , src = typeof imageFile == "string" ? imageFile : win.URL.createObjectURL(imageFile)
+      , src, urlSrc
 
-    img.onload = function(){
+    function resize(  ){
       width = img.width
       height = img.height
       if ( width > height ) {
@@ -144,16 +144,30 @@
       context.drawImage(img, 0, 0, width, height)
       done(ret)
     }
-    img.src = src
-    win.URL.revokeObjectURL(img.src)
-    return ret = {
+    ret = {
       dataURL: function(){
-        return canvas.toDataURL(imageFile.type)
+        return canvas.toDataURL(sourceImage.type)
       },
       blob: function(){
-        return localsys.datURLtoBlob(canvas.toDataURL(imageFile.type), imageFile.type)
+        return localsys.datURLtoBlob(canvas.toDataURL(sourceImage.type), sourceImage.type)
       }
     }
+    if( sourceImage instanceof Image ) {
+      img = sourceImage
+      resize()
+    }
+    else{
+      if( typeof sourceImage == "string" ) {
+        src = sourceImage
+      }
+      else if( sourceImage instanceof Blob ){
+        urlSrc = win.URL.createObjectURL(sourceImage)
+      }
+      img.onload = resize
+      img.src = src || urlSrc
+      urlSrc && win.URL.revokeObjectURL(urlSrc)
+    }
+    return ret
   }
 
   /*
@@ -179,6 +193,7 @@
   }
 
   function dynamicSpace( bytes, precision ){
+    precision = precision || 1
     return bytes > 1024*1024*1024*1024 ? ((bytes / 1024/1024/1024/1024)*precision>>0)/precision + "TB"
       : bytes > 1024*1024*1024 ? ((bytes / 1024/1024/1024)*precision>>0)/precision + "GB"
       : bytes > 1024*1024 ? ((bytes / 1024/1024)*precision>>0)/precision + "MB"
@@ -227,30 +242,26 @@
         this.message += 'Error';
         break;
     }
-    this.message += msg
+    this.message += " " + msg
     this.extra = extra
-    globalConfig.logErrors && console.error(this)
+    globalConfig.logErrors && console.error("%O", this)
     failed ? failed(this) : done && done(null, this)
   }
   LocalError.prototype = new Error()
   LocalError.prototype.constructor = LocalError
 
   function askForMore( e, options, path, done, failed ){
+    debugger;
     var requestSize = grantedBytes
       , configSize = globalConfig.requestQuotaSize || 0
-      , errorObj = (e.currentTarget || e.srcElement).error
+      , errorObj = e.code ? e : (e.currentTarget || e.srcElement).error
 
-    if ( !QUOTA_REQUEST_ERR && errorObj.code == QUOTA_EXCEEDED_ERR
-      && configSize && !local.isTemporary ) {
-      requestSize += configSize
-      if ( options.content instanceof File ) {
-        if ( requestSize < options.content.size && globalConfig.requestQuotaFileSize ) {
-          requestSize += options.content.size
-        }
-        else {
-          return new LocalError(errorObj, "Error requesting quota", null, done, failed)
-        }
-      }
+    if ( !QUOTA_REQUEST_ERR && errorObj.code == QUOTA_EXCEEDED_ERR && configSize && !local.isTemporary ) {
+
+      requestSize += options.content instanceof Blob && globalConfig.requestQuotaFileSize
+        ? options.content.size
+        : configSize
+
       storageInfo.requestQuota(win.PERSISTENT, requestSize, function( granted ){
           local.granted = grantedBytes = granted
           // since I guess creating a folder won't cause you this trouble
@@ -304,11 +315,10 @@
   function moveCopyRename( op, root, options ){
     var entry = options.path
       , source = options.source
-      , failed = options.error
       , done = options.done
 
     function failed( e ){
-      new LocalError(e, "Error renaming entry", options, done, failed)
+      new LocalError(e, "Error renaming entry", options, done, options.error)
     }
 
     if ( !entry ) return failed()
@@ -593,6 +603,7 @@
       source.getFile(path, options, function( entry ){
         processFile(entry, path, options, done, failed)
       }, function( e ){
+        if( e.code == QUOTA_EXCEEDED_ERR ) return askForMore(e, options, path, done, failed)
         options.resolve = options.resolve || options.content != undefined
         options.create = options.create || options.resolve
         if ( options.create && options.resolve ) {
@@ -616,7 +627,9 @@
         writer.onwriteend = function(){
           if ( options.truncate ) {
             writer.onwriteend = function(){
-              done && done(entry)
+              if( !done ) return
+              if( options.read ) readFile(entry, options, done, failed)
+              else done(entry)
             }
             options.append && writer.seek(options.seek == undefined ? writer.length : options.seek)
             if ( options.content instanceof Blob ) {
@@ -653,6 +666,7 @@
     /* read */
     else readFile(entry, options, done, failed)
   }
+
   function readFile( entry, options, done, failed ){
     entry.file(function( file ){
       options.as == "binary" ? localsys.readBinary(file, done)
@@ -722,6 +736,12 @@
       })
     },
     tree: function( options ){
+      options = options || {
+        path: this.root,
+        done: function( tree ){
+          console.log(tree)
+        }
+      }
       var done = options.done
         , bubble = options.bubble || done
         , tree = options.tree || {}
@@ -793,6 +813,7 @@
       getFile(options)
     },
     read: function( options ){
+      options.read = true
       if ( options.content || isFilePath(options.path) ) getFile(options)
       else getDir(options)
     },
@@ -823,7 +844,7 @@
         request(PERSISTENT, granted,
           function( fs ){
             local = new LocalSys(fs, PERSISTENT, false, granted)
-            baseQuota = granted
+            baseQuota = grantedBytes = granted
             delete options.done
             delete options.error
             globalConfig = options
