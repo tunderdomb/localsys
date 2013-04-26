@@ -17,6 +17,8 @@
     , PERSISTENT = win.PERSISTENT
     , TEMPORARY = win.TEMPORARY
 
+  function noop(){}
+
   localsys.isImagePath = function( filePath ){
     return /\.(jpe?g|png|gif)$/i.test(filePath)
   }
@@ -412,6 +414,7 @@
     }
   }
   function processDir( dir, path, options, done, failed ){
+    done = done || noop
     /* entry */
     if ( options.entry ) return done && done(dir)
 
